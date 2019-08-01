@@ -9,11 +9,10 @@ define( function( require, exports ) {
 	var _ = require( 'underscore' ),
 			Backbone = require( 'backbone' ),
 			RegionManager = require( 'core/region-manager' ),
-			Utils = require( 'core/app-utils' ),
-			Config = require( 'root/config' ),
 			Messages = require( 'core/messages' ),
 			App = require( 'core/app' ),
 			Hooks = require( 'core/lib/hooks' ),
+			DynamicData = require( 'core/app-dynamic-data' ),
 			TemplateTags = require( 'core/theme-tpl-tags' ),
 			PhoneGap = require( 'core/phonegap/utils' );
 
@@ -38,7 +37,7 @@ define( function( require, exports ) {
 	};
 
 	/**
-	 * Aggregate App and RegionManager events
+	 * Aggregate ThemeApp and RegionManager events
 	 */
 	themeApp.on = function( event, callback ) {
 		if ( _.contains( [ 'screen:leave',
@@ -50,6 +49,9 @@ define( function( require, exports ) {
 						event ) ) {
 			//Proxy RegionManager events :
 			RegionManager.on( event, callback );
+		} else if ( _.contains( [ 'refresh:start', 'refresh:end' ],	event ) ) {
+			//Proxy App events :
+			App.on( event, callback );
 		} else {
 			vent.on( event, callback );
 		}
@@ -236,10 +238,9 @@ define( function( require, exports ) {
 	themeApp.refresh = function( cb_ok, cb_error ) {
 
 		refreshing++;
-		vent.trigger( 'refresh:start' );
 
 		App.sync(
-			function() {
+			function( deferred ) {
 				RegionManager.buildMenu(
 					function() {
 						App.resetDefaultRoute();
@@ -258,7 +259,10 @@ define( function( require, exports ) {
 						Backbone.history.start({silent:false});
 
 						refreshing--;
-						vent.trigger( 'refresh:end', format_result_data(true) );
+                        
+                        if ( deferred ) {
+                            deferred.resolve( format_result_data( true ) ); //Triggers refresh:end
+                        }
 
 						if ( cb_ok ) {
 							cb_ok();
@@ -267,7 +271,7 @@ define( function( require, exports ) {
 					true
 				);
 			},
-			function( error ) {
+			function( error, deferred ) {
 				refreshing--;
 
 				var formated_error = format_theme_event_data( error.event, error );
@@ -278,7 +282,9 @@ define( function( require, exports ) {
 
 				var result = format_result_data(false,formated_error.message,formated_error);
 
-				vent.trigger( 'refresh:end', result );
+                if ( deferred ) {
+                    deferred.reject( result ); //Triggers refresh:end
+                }
 			},
 			true
 		);
@@ -293,11 +299,15 @@ define( function( require, exports ) {
 	 */
 
 	themeApp.navigate = function( navigate_to_fragment ) {
-		App.router.navigate( navigate_to_fragment, { trigger: true } );
+		if ( !App.isLaunching() ) { //Don't allow to navigate from theme if app is launching
+			App.router.navigate( navigate_to_fragment, { trigger: true } );
+		}
 	};
 
 	themeApp.navigateToDefaultRoute = function() {
-		App.router.default_route();
+		if ( !App.isLaunching() ) { //Don't allow to navigate from theme if app is launching
+			App.router.default_route();
+		}
 	};
 
 	themeApp.navigateToPreviousScreen = function() {
@@ -331,6 +341,14 @@ define( function( require, exports ) {
 	themeApp.rerenderCurrentScreen = function() {
 		var current_view = RegionManager.getCurrentView();
 		current_view.render();
+	};
+	
+	/**
+	 * Retrieve current Backbone view object
+	 */
+	themeApp.getCurrentView = function() {
+		var current_view = RegionManager.getCurrentView();
+		return current_view;
 	};
 
 	/************************************************
@@ -435,6 +453,48 @@ define( function( require, exports ) {
 		);
 
 	};
+	
+	/**
+	 * When on a comments screen, reloads the comments for the current post and
+	 * re-renders the view to display new comments.
+	 * 
+	 * @param {function} cb_ok      What to do when comment screen was updated successfully 
+	 * @param {function} cb_error   What to do if an error occurs while updating comment screen
+	 */
+	themeApp.updateCurrentCommentScreen = function ( cb_ok, cb_error ) {
+		
+		var current_screen_info = this.getCurrentScreenObject();
+		
+		if ( current_screen_info.screen_type !== 'comments' ) {
+			return;
+		}
+
+		//Retrieve post id corresponding to the current comments screen:
+		var post_id = current_screen_info.post.id;
+
+		var _this = this;
+		
+		//Reload post comments from server:
+		App.getPostComments(
+			post_id,
+			function ( comments, post ) {
+				//New comments loaded successfully				
+				
+				//Update current view's comments with new comments
+				var comments_view = RegionManager.getCurrentView();
+				comments_view.comments = comments;
+				
+				//Rerender screen:
+				_this.rerenderCurrentScreen();
+				
+				cb_ok( comments, post );
+			},
+			function ( error ) {
+				cb_error( error );
+			},
+			true //To force post comments cache flush
+		);
+	}
 
 	/************************************************
 	 * Components
@@ -664,6 +724,14 @@ define( function( require, exports ) {
 	};
 
 	/************************************************
+	 * Dynamic data from synchronization web service
+	 */
+	
+	themeApp.getDynamicData = function ( field ) {
+		return DynamicData.getDynamicData( field );
+	};
+
+	/************************************************
 	 * DOM element auto class
 	 */
 
@@ -769,17 +837,20 @@ define( function( require, exports ) {
 	 * App custom pages and custom routes management
 	 */
 
-	themeApp.showCustomPage = function( template, data, id ) {
+	themeApp.showCustomPage = function( template, data, fragment, silent ) {
 		if ( template === undefined ) {
 			template = 'custom';
 		}
 		if ( data === undefined ) {
 			data = {};
 		}
-		if ( id === undefined ) {
-			id = 'auto-custom-page';
+		if ( fragment === undefined ) {
+			fragment = 'auto-custom-page';
 		}
-		App.showCustomPage( template, data, id );
+		if ( silent === undefined ) {
+			silent = true;
+		}
+		App.showCustomPage( template, data, fragment, silent );
 	};
 
 	themeApp.addCustomRoute = function( fragment, template, data ) {
@@ -833,13 +904,34 @@ define( function( require, exports ) {
 	 *
 	 * @param {int} item_id Post ID of the post to retrieve
 	 * @param {string} global_key (Optional) global to retrieve the item from: 'posts' (default) or 'pages'.
-	 * @returns {JSON Object} item (post or page) object
+	 * @returns {JSON Object | null} item (post or page) object if found, null if no post found with the given item_id.
 	 */
 	themeApp.getItem = function( item_id, global_key ) {
 
 		global_key = global_key || 'posts';
 
 		return App.getGlobalItem( global_key, item_id );
+	};
+	
+	/**
+	* Retrieve items (posts/pages etc) from remote server and merge them into existing app's items.
+	* 
+	* @param Array items array of ids of pages/posts to retrieve. 
+	* @param JSON Object options:
+	*  - component_id:   Int (optional) Slug of the component we want to retrieve items for.
+	*                    If not provided, the first component of "component_type" found
+	*                    will be used.
+	*  - component_type: String (optional) Type of component ("posts-list", "pages") we want to
+	*                    retrieve items for. Only useful if component_id is not provided.
+	*                    If not provided, defaults to "posts-list".
+	*  - persistent:     Boolean (optional) Whether to persist retrieved items to local storage.
+	*                    Defaults to true.
+	*  - success:        Callback (optional) Called if items are retrieved successfully
+	*  - error:          Callback (optional) Called if an error occured while retrieving items from server.
+	*                    App error events are also triggered in that case.
+	*/
+	themeApp.getItemsFromRemote = function( items_ids, options ) {
+		App.getItemsFromRemote( items_ids, options );
 	};
 
 	/**
@@ -978,8 +1070,8 @@ define( function( require, exports ) {
 				screen_object = {
 					id: screen_data.item_id,
 					route: screen_data.item_id,
-					title: current_view.custom_page_data.hasOwnProperty( 'title' ) ? current_view.custom_page_data.title : '',
-					data: current_view.custom_page_data,
+					title: current_view.custom_page_data && current_view.custom_page_data.hasOwnProperty( 'title' ) ? current_view.custom_page_data.title : '',
+					data: current_view.custom_page_data ? current_view.custom_page_data : {},
 					template: current_view.template_name
 				};
 				break;
@@ -999,6 +1091,16 @@ define( function( require, exports ) {
 
         return screen_object;
     };
+	
+	/**
+	 * Re-render Menu view
+	 */
+	themeApp.renderMenu = function() {
+		var menu_view = RegionManager.getMenuView();
+		if ( menu_view ) {
+			menu_view.render();
+		}
+	};
 
 	//Use exports so that theme-tpl-tags and theme-app (which depend on each other, creating
 	//a circular dependency for requirejs) can both be required at the same time

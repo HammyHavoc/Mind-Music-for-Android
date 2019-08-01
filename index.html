@@ -1,14 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en-US">
 	<head>
 		<script src="cordova.js"></script>
 		
-		<link rel="stylesheet" href="core/css/debug.css">
 		<script type="text/javascript">
 			var require = {
 				urlArgs : "bust="+ new Date().getTime()
 			};
-
+                </script>
+                
+                <script type="text/javascript">
 			var wpak_open_url = '';
 			window.handleOpenURL = function( url ) {
 			    wpak_open_url = url;

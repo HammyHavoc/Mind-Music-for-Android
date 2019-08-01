@@ -13,6 +13,7 @@ define(function(require, exports) {
 		Stats         = require('core/stats'),
 		Addons        = require('core/addons-internal'),
         ThemeApp      = require('core/theme-app'),
+        DynamicData   = require('core/app-dynamic-data'),
         Hooks         = require('core/lib/hooks'),
 		Utils         = require('core/app-utils');
 
@@ -71,8 +72,9 @@ define(function(require, exports) {
      */
     themeTplTags.isDefaultScreen = function( screen_data ) {
         var fragment = "undefined" != typeof screen_data && screen_data.hasOwnProperty( 'fragment' ) ? screen_data.fragment : Backbone.history.fragment;
-
-        return App.router.getDefaultRoute() == '#' + fragment;
+        var prefix = App.getParam('use-html5-pushstate') ? '' : '#';
+        fragment = prefix + fragment;
+        return fragment.length === 0 || App.router.getDefaultRoute() == fragment;
     };
 
 	/**
@@ -318,7 +320,7 @@ define(function(require, exports) {
 	themeTplTags.getThemeAssetUrl = function( theme_asset_url, bust ) {
 
 		if( bust === undefined ) {
-			bust = Config.debug_mode == 'on';
+			bust = Config.debug_mode === 'on' && Config.app_type !== 'pwa';
 		}else{
 			bust = bust === true;
 		}
@@ -676,6 +678,21 @@ define(function(require, exports) {
         var components = App.components.where( { type: type } );
 
         return components.length > 0;
+    };
+
+    /**
+     * Retrieve GMT offset from dynamic data if available, from config.js if not
+     * 
+     * @return int GMT offset
+     */
+    themeTplTags.getGmtOffset = function() {
+        var gmt_offset = DynamicData.getDynamicData( 'gmt_offset' );
+
+        if ( gmt_offset === undefined ) {
+            gmt_offset = Config.gmt_offset;
+        }
+
+        return gmt_offset;
     };
 
     //Use exports so that theme-tpl-tags and theme-app (which depend on each other, creating
